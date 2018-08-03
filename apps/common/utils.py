@@ -16,6 +16,7 @@ import calendar
 import threading
 from io import StringIO
 import uuid
+from functools import wraps
 
 import paramiko
 import sshpubkeys
@@ -72,6 +73,8 @@ class Signer(metaclass=Singleton):
         return s.dumps(value)
 
     def unsign(self, value):
+        if value is None:
+            return value
         s = JSONWebSignatureSerializer(self.secret_key)
         try:
             return s.loads(value)
@@ -232,6 +235,14 @@ def setattr_bulk(seq, key, value):
     return map(set_attr, seq)
 
 
+def set_or_append_attr_bulk(seq, key, value):
+    for obj in seq:
+        ori = getattr(obj, key, None)
+        if ori:
+            value += " " + ori
+        setattr(obj, key, value)
+
+
 def content_md5(data):
     """计算data的MD5值，经过Base64编码并返回str类型。
 
@@ -350,11 +361,17 @@ def get_short_uuid_str():
     return str(uuid.uuid4()).split('-')[-1]
 
 
-def is_uuid(s):
-    if UUID_PATTERN.match(s):
-        return True
+def is_uuid(seq):
+    if isinstance(seq, str):
+        if UUID_PATTERN.match(seq):
+            return True
+        else:
+            return False
     else:
-        return False
+        for s in seq:
+            if not is_uuid(s):
+                return False
+        return True
 
 
 def get_signer():
@@ -378,3 +395,18 @@ class TeeObj:
 
     def close(self):
         self.file_obj.close()
+
+
+def with_cache(func):
+    cache = {}
+    key = "_{}.{}".format(func.__module__, func.__name__)
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        cached = cache.get(key)
+        if cached:
+            return cached
+        res = func(*args, **kwargs)
+        cache[key] = res
+        return res
+    return wrapper

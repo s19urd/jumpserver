@@ -9,23 +9,25 @@ from django.core.cache import cache
 from django.shortcuts import get_object_or_404, redirect
 from django.utils import timezone
 from django.core.files.storage import default_storage
+from django.http.response import HttpResponseRedirectBase
 from django.http import HttpResponseNotFound
 from django.conf import settings
 
 import jms_storage
 
-from rest_framework import viewsets, serializers
+from rest_framework import viewsets
 from rest_framework.views import APIView, Response
 from rest_framework.permissions import AllowAny
 from rest_framework_bulk import BulkModelViewSet
 
-from common.utils import get_object_or_none
+from common.utils import get_object_or_none, is_uuid
+from .hands import SystemUser
 from .models import Terminal, Status, Session, Task
 from .serializers import TerminalSerializer, StatusSerializer, \
     SessionSerializer, TaskSerializer, ReplaySerializer
 from .hands import IsSuperUserOrAppUser, IsAppUser, \
     IsSuperUserOrAppUserOrUserReadonly
-from .backends import get_command_store, get_multi_command_store, \
+from .backends import get_command_storage, get_multi_command_storage, \
     SessionCommandSerializer
 
 logger = logging.getLogger(__file__)
@@ -108,7 +110,9 @@ class StatusViewSet(viewsets.ModelViewSet):
     task_serializer_class = TaskSerializer
 
     def create(self, request, *args, **kwargs):
-        self.handle_sessions()
+        from_gua = self.request.query_params.get("from_guacamole", None)
+        if not from_gua:
+            self.handle_sessions()
         super().create(request, *args, **kwargs)
         tasks = self.request.user.terminal.task_set.filter(is_finished=False)
         serializer = self.task_serializer_class(tasks, many=True)
@@ -182,6 +186,16 @@ class SessionViewSet(viewsets.ModelViewSet):
             self.queryset = terminal.session_set.all()
         return self.queryset
 
+    def perform_create(self, serializer):
+        if hasattr(self.request.user, 'terminal'):
+            serializer.validated_data["terminal"] = self.request.user.terminal
+        sid = serializer.validated_data["system_user"]
+        if is_uuid(sid):
+            _system_user = SystemUser.get_system_user_by_id_or_cached(sid)
+            if _system_user:
+                serializer.validated_data["system_user"] = _system_user.name
+        return super().perform_create(serializer)
+
 
 class TaskViewSet(BulkModelViewSet):
     queryset = Task.objects.all()
@@ -219,8 +233,8 @@ class CommandViewSet(viewsets.ViewSet):
     }
 
     """
-    command_store = get_command_store()
-    multi_command_storage = get_multi_command_store()
+    command_store = get_command_storage()
+    multi_command_storage = get_multi_command_storage()
     serializer_class = SessionCommandSerializer
     permission_classes = (IsSuperUserOrAppUser,)
 
@@ -248,12 +262,37 @@ class CommandViewSet(viewsets.ViewSet):
 
 class SessionReplayViewSet(viewsets.ViewSet):
     serializer_class = ReplaySerializer
-    permission_classes = ()
+    permission_classes = (IsSuperUserOrAppUser,)
     session = None
+    upload_to = 'replay'  # 仅添加到本地存储中
 
-    def gen_session_path(self):
+    def get_session_path(self, version=2):
+        """
+        获取session日志的文件路径
+        :param version: 原来后缀是 .gz，为了统一新版本改为 .replay.gz
+        :return:
+        """
+        suffix = '.replay.gz'
+        if version == 1:
+            suffix = '.gz'
         date = self.session.date_start.strftime('%Y-%m-%d')
-        return os.path.join(date, str(self.session.id) + '.gz')
+        return os.path.join(date, str(self.session.id) + suffix)
+
+    def get_local_path(self, version=2):
+        session_path = self.get_session_path(version=version)
+        if version == 2:
+            local_path = os.path.join(self.upload_to, session_path)
+        else:
+            local_path = session_path
+        return local_path
+
+    def save_to_storage(self, f):
+        local_path = self.get_local_path()
+        try:
+            name = default_storage.save(local_path, f)
+            return name, None
+        except OSError as e:
+            return None, e
 
     def create(self, request, *args, **kwargs):
         session_id = kwargs.get('pk')
@@ -262,40 +301,65 @@ class SessionReplayViewSet(viewsets.ViewSet):
 
         if serializer.is_valid():
             file = serializer.validated_data['file']
-            file_path = self.gen_session_path()
-            try:
-                default_storage.save(file_path, file)
-                return Response({'url': default_storage.url(file_path)},
-                                status=201)
-            except IOError:
-                return Response("Save error", status=500)
+            name, err = self.save_to_storage(file)
+            if not name:
+                msg = "Failed save replay `{}`: {}".format(session_id, err)
+                logger.error(msg)
+                return Response({'msg': str(err)}, status=400)
+            url = default_storage.url(name)
+            return Response({'url': url}, status=201)
         else:
-            logger.error(
-                'Update load data invalid: {}'.format(serializer.errors))
+            msg = 'Upload data invalid: {}'.format(serializer.errors)
+            logger.error(msg)
             return Response({'msg': serializer.errors}, status=401)
 
     def retrieve(self, request, *args, **kwargs):
         session_id = kwargs.get('pk')
         self.session = get_object_or_404(Session, id=session_id)
-        path = self.gen_session_path()
 
-        if default_storage.exists(path):
-            url = default_storage.url(path)
-            return redirect(url)
-        else:
-            configs = settings.TERMINAL_REPLAY_STORAGE.items()
-            if not configs:
-                return HttpResponseNotFound()
+        # 新版本和老版本的文件后缀不同
+        session_path = self.get_session_path()  # 存在外部存储上的路径
+        local_path = self.get_local_path()
+        local_path_v1 = self.get_local_path(version=1)
 
-            for name, config in configs:
-                client = jms_storage.init(config)
-                date = self.session.date_start.strftime('%Y-%m-%d')
-                file_path = os.path.join(date, str(self.session.id) + '.replay.gz')
-                target_path = default_storage.base_location + '/' + path
+        # 去default storage中查找
+        for _local_path in (local_path, local_path_v1, session_path):
+            if default_storage.exists(_local_path):
+                url = default_storage.url(_local_path)
+                return redirect(url)
 
-                if client and client.has_file(file_path) and \
-                        client.download_file(file_path, target_path):
-                    return redirect(default_storage.url(path))
+        # 去定义的外部storage查找
+        configs = settings.TERMINAL_REPLAY_STORAGE
+        configs = {k: v for k, v in configs.items() if v['TYPE'] != 'server'}
+        if not configs:
+            return HttpResponseNotFound()
+
+        target_path = os.path.join(default_storage.base_location, local_path)   # 保存到storage的路径
+        target_dir = os.path.dirname(target_path)
+        if not os.path.isdir(target_dir):
+            os.makedirs(target_dir, exist_ok=True)
+        storage = jms_storage.get_multi_object_storage(configs)
+        ok, err = storage.download(session_path, target_path)
+        if not ok:
+            logger.error("Failed download replay file: {}".format(err))
+            return HttpResponseNotFound()
+        return redirect(default_storage.url(local_path))
+
+
+class SessionReplayV2ViewSet(SessionReplayViewSet):
+    serializer_class = ReplaySerializer
+    permission_classes = (IsSuperUserOrAppUser,)
+    session = None
+
+    def retrieve(self, request, *args, **kwargs):
+        response = super().retrieve(request, *args, **kwargs)
+        data = {
+            'type': 'guacamole' if self.session.protocol == 'rdp' else 'json',
+            'src': '',
+        }
+        if isinstance(response, HttpResponseRedirectBase):
+            data['src'] = response.url
+            return Response(data)
         return HttpResponseNotFound()
 
 

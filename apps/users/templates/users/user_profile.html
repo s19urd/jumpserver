@@ -63,10 +63,7 @@
                                                 <td class="text-navy">{% trans 'Active' %}</td>
                                                 <td>{{ user.is_active|yesno:"Yes,No,Unkown" }}</td>
                                             </tr>
-                                            <tr>
-                                                <td class="text-navy">{% trans 'OTP' %}</td>
-                                                <td>{{ user.enable_otp|yesno:"Yes,No,Unkown" }}</td>
-                                            </tr>
+
                                             <tr>
                                                 <td class="text-navy">{% trans 'Public key' %}</td>
                                                 <td>
@@ -83,6 +80,25 @@
                                                         </tr>
                                                     </table>
                                                 </td>
+                                            </tr>
+                                            <tr>
+                                                <td class="text-navy">{% trans 'MFA certification' %}</td>
+                                                <td>
+                                                    {% if user.otp_force_enabled %}
+                                                        {% trans 'Force enable' %}
+                                                    {% elif  user.otp_enabled%}
+                                                        {% trans 'Enable' %}
+                                                    {% else %}
+                                                        {% trans 'Disable' %}
+                                                    {% endif %}
+                                                    {% if mfa_setting %}
+                                                        ( {% trans 'Administrator Settings force MFA login' %} )
+                                                    {% endif %}
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td class="text-navy">{% trans 'Source' %}</td>
+                                                <td>{{ user.get_source_display }}</td>
                                             </tr>
                                             <tr>
                                                 <td class="text-navy">{% trans 'Date joined' %}</td>
@@ -133,6 +149,27 @@
                                         <td>
                                             <span class="pull-right">
                                                 <a type="button" class="btn btn-primary btn-xs" style="width: 54px" href="{% url 'users:user-password-update' %}">{% trans 'Update' %}</a>
+                                            </span>
+                                        </td>
+                                    </tr>
+                                    <tr class="no-borders-tr">
+                                        <td>{% trans 'Update MFA settings' %}:</td>
+                                        <td>
+                                            <span class="pull-right">
+                                                <a type="button" class="btn btn-primary btn-xs" style="width: 54px" id=""
+                                                   href="
+                                                        {% if request.user.otp_enabled and request.user.otp_secret_key %}
+                                                            {% if request.user.otp_force_enabled %}
+                                                                " disabled >{% trans 'Disable' %}
+                                                            {% else %}
+                                                                {% url 'users:user-otp-disable-authentication' %}
+                                                                ">{% trans 'Disable' %}
+                                                            {% endif %}
+                                                        {% else %}
+                                                            {% url 'users:user-otp-enable-authentication' %}
+                                                            ">{% trans 'Enable' %}
+                                                        {% endif %}
+                                                </a>
                                             </span>
                                         </td>
                                     </tr>

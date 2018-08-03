@@ -49,6 +49,7 @@ class AssetListView(AdminUserRequiredMixin, TemplateView):
             'app': _('Assets'),
             'action': _('Asset list'),
             'labels': Label.objects.all().order_by('name'),
+            'nodes': Node.objects.all().order_by('-key'),
         }
         kwargs.update(context)
         return super().get_context_data(**kwargs)
@@ -233,8 +234,16 @@ class AssetExportView(View):
     def post(self, request, *args, **kwargs):
         try:
             assets_id = json.loads(request.body).get('assets_id', [])
+            assets_node_id = json.loads(request.body).get('node_id', None)
         except ValueError:
             return HttpResponse('Json object not valid', status=400)
+
+        if not assets_id and assets_node_id:
+            assets_node = get_object_or_none(Node, id=assets_node_id)
+            assets = assets_node.get_all_assets()
+            for asset in assets:
+                assets_id.append(asset.id)
+
         spm = uuid.uuid4().hex
         cache.set(spm, assets_id, 300)
         url = reverse_lazy('assets:asset-export') + '?spm=%s' % spm
@@ -276,24 +285,29 @@ class BulkImportAssetView(AdminUserRequiredMixin, JSONResponseMixin, FormView):
             if set(row) == {''}:
                 continue
 
-            asset_dict = dict(zip(attr, row))
-            id_ = asset_dict.pop('id', 0)
-            for k, v in asset_dict.items():
+            asset_dict_raw = dict(zip(attr, row))
+            asset_dict = dict()
+            for k, v in asset_dict_raw.items():
                 v = v.strip()
                 if k == 'is_active':
-                    v = True if v in ['TRUE', 1, 'true'] else False
+                    v = False if v in ['False', 0, 'false'] else True
                 elif k == 'admin_user':
                     v = get_object_or_none(AdminUser, name=v)
                 elif k in ['port', 'cpu_count', 'cpu_cores']:
                     try:
                         v = int(v)
                     except ValueError:
-                        v = 0
+                        v = ''
                 elif k == 'domain':
                     v = get_object_or_none(Domain, name=v)
-                asset_dict[k] = v
 
-            asset = get_object_or_none(Asset, id=id_) if is_uuid(id_) else None
+                if v != '':
+                    asset_dict[k] = v
+
+            asset = None
+            asset_id = asset_dict.pop('id', None)
+            if asset_id:
+                asset = get_object_or_none(Asset, id=asset_id)
             if not asset:
                 try:
                     if len(Asset.objects.filter(hostname=asset_dict.get('hostname'))):
@@ -308,7 +322,7 @@ class BulkImportAssetView(AdminUserRequiredMixin, JSONResponseMixin, FormView):
                     failed.append('%s: %s' % (asset_dict['hostname'], str(e)))
             else:
                 for k, v in asset_dict.items():
-                    if v:
+                    if v != '':
                         setattr(asset, k, v)
                 try:
                     asset.save()

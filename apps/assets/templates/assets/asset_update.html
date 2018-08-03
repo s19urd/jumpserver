@@ -21,6 +21,7 @@
     <h3>{% trans 'Basic' %}</h3>
     {% bootstrap_field form.hostname layout="horizontal" %}
     {% bootstrap_field form.ip layout="horizontal" %}
+    {% bootstrap_field form.protocol layout="horizontal" %}
     {% bootstrap_field form.port layout="horizontal" %}
     {% bootstrap_field form.platform layout="horizontal" %}
     {% bootstrap_field form.public_ip layout="horizontal" %}
@@ -39,7 +40,7 @@
     <div class="form-group">
         <label for="{{ form.labels.id_for_label }}" class="col-md-2 control-label">{% trans 'Label' %}</label>
         <div class="col-md-9">
-            <select name="labels" class="select2 labels" data-placeholder="Select labels" style="width: 100%" multiple="" tabindex="4" id="{{ form.labels.id_for_label }}">
+            <select name="labels" class="select2 labels" data-placeholder="{% trans 'Label'  %}" style="width: 100%" multiple="" tabindex="4" id="{{ form.labels.id_for_label }}">
                 {% for name, labels in form.labels.field.queryset|group_labels %}
                 <optgroup label="{{ name }}">
                     {% for label in labels %}

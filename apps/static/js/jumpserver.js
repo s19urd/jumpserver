@@ -62,7 +62,6 @@ function GetTableDataBox() {
          }
         }
     for (i in id_list) {
-        console.log(tabProduct);
         tableData.push(GetRowData(tabProduct.rows[id_list[i]]));
     }
 
@@ -174,14 +173,14 @@ function APIUpdateAttr(props) {
         }
         if (typeof props.success === 'function') {
             return props.success(data);
-        } 
+        }
     }).fail(function(jqXHR, textStatus, errorThrown) {
         if (flash_message) {
             toastr.error(fail_message);
         }
         if (typeof props.error === 'function') {
             return props.error(jqXHR.responseText);
-        } 
+        }
     });
   // return true;
 }
@@ -199,7 +198,8 @@ function objectDelete(obj, name, url, redirectTo) {
             }
         };
         var fail = function() {
-            swal("错误", "删除"+"[ "+name+" ]"+"遇到错误", "error");
+            // swal("错误", "删除"+"[ "+name+" ]"+"遇到错误", "error");
+            swal("错误", "[ "+name+" ]"+"正在被资产使用中，请先解除资产绑定", "error");
         };
         APIUpdateAttr({
             url: url,
@@ -220,7 +220,7 @@ function objectDelete(obj, name, url, redirectTo) {
         confirmButtonText: '确认',
         closeOnConfirm: true,
     }, function () {
-        doDelete()       
+        doDelete()
     });
 }
 
@@ -240,6 +240,13 @@ $.fn.serializeObject = function()
     });
     return o;
 };
+
+function makeLabel(data) {
+    return "<label class='detail-key'><b>" + data[0] + ": </b></label>" + data[1] + "</br>"
+}
+
+
+
 var jumpserver = {};
 jumpserver.checked = false;
 jumpserver.selected = {};
@@ -266,7 +273,7 @@ jumpserver.initDataTable = function (options) {
               $(td).html('<input type="checkbox" class="text-center ipt_check" id=99991937>'.replace('99991937', cellData));
           }
       },
-      {className: 'text-center', targets: '_all'}
+      {className: 'text-center', render: $.fn.dataTable.render.text(), targets: '_all'}
   ];
   columnDefs = options.columnDefs ? options.columnDefs.concat(columnDefs) : columnDefs;
   var select = {
@@ -281,7 +288,7 @@ jumpserver.initDataTable = function (options) {
         buttons: [],
         columnDefs: columnDefs,
         ajax: {
-            url: options.ajax_url ,
+            url: options.ajax_url,
             dataSrc: ""
         },
         columns: options.columns || [],
@@ -301,7 +308,7 @@ jumpserver.initDataTable = function (options) {
                 last:       "»"
             }
         },
-        lengthMenu: [[15, 25, 50, -1], [15, 25, 50, "All"]]
+        lengthMenu: [[10, 15, 25, 50, -1], [10, 15, 25, 50, "All"]]
     });
     table.on('select', function(e, dt, type, indexes) {
         var $node = table[ type ]( indexes ).nodes().to$();
@@ -440,22 +447,56 @@ jumpserver.initServerSideDataTable = function (options) {
                 last:       "»"
             }
         },
-        lengthMenu: [[15, 25, 50], [15, 25, 50]]
+        lengthMenu: [[10, 15, 25, 50], [10, 15, 25, 50]]
     });
+    table.selected = [];
     table.on('select', function(e, dt, type, indexes) {
         var $node = table[ type ]( indexes ).nodes().to$();
         $node.find('input.ipt_check').prop('checked', true);
-        jumpserver.selected[$node.find('input.ipt_check').prop('id')] = true
+        jumpserver.selected[$node.find('input.ipt_check').prop('id')] = true;
+        if (type === 'row') {
+            var rows = table.rows(indexes).data();
+            $.each(rows, function (id, row) {
+                if (row.id){
+                    table.selected.push(row.id)
+                }
+            })
+        }
     }).on('deselect', function(e, dt, type, indexes) {
         var $node = table[ type ]( indexes ).nodes().to$();
         $node.find('input.ipt_check').prop('checked', false);
-        jumpserver.selected[$node.find('input.ipt_check').prop('id')] = false
+        jumpserver.selected[$node.find('input.ipt_check').prop('id')] = false;
+        if (type === 'row') {
+            var rows = table.rows(indexes).data();
+            $.each(rows, function (id, row) {
+                if (row.id){
+                    var index = table.selected.indexOf(row.id);
+                    if (index > -1){
+                        table.selected.splice(index, 1)
+                    }
+                }
+            })
+        }
     }).
     on('draw', function(){
         $('#op').html(options.op_html || '');
         $('#uc').html(options.uc_html || '');
+        var table_data = [];
+        $.each(table.rows().data(), function (id, row) {
+            if (row.id) {
+                table_data.push(row.id)
+            }
+        });
+
+        $.each(table.selected, function (id, data) {
+            var index = table_data.indexOf(data);
+            if (index > -1){
+                table.rows(index).select()
+            }
+        });
     });
-    $('.ipt_check_all').on('click', function() {
+    var table_id = table.settings()[0].sTableId;
+    $('#' + table_id + ' .ipt_check_all').on('click', function() {
         if ($(this).prop("checked")) {
             $(this).closest('table').find('.ipt_check').prop('checked', true);
             table.rows({search:'applied', page:'current'}).select();
@@ -568,4 +609,92 @@ function setUrlParam(url, name, value) {
         url += newParam.join("&")
     }
     return url
+}
+
+// 校验密码-改变规则颜色
+function checkPasswordRules(password, minLength) {
+    if (wordMinLength(password, minLength)) {
+        $('#rule_SECURITY_PASSWORD_MIN_LENGTH').css('color', 'green')
+    }
+    else {
+        $('#rule_SECURITY_PASSWORD_MIN_LENGTH').css('color', '#908a8a')
+    }
+
+    if (wordUpperCase(password)) {
+        $('#rule_SECURITY_PASSWORD_UPPER_CASE').css('color', 'green');
+    }
+    else {
+        $('#rule_SECURITY_PASSWORD_UPPER_CASE').css('color', '#908a8a')
+    }
+
+    if (wordLowerCase(password)) {
+        $('#rule_SECURITY_PASSWORD_LOWER_CASE').css('color', 'green')
+    }
+    else {
+        $('#rule_SECURITY_PASSWORD_LOWER_CASE').css('color', '#908a8a')
+    }
+
+    if (wordNumber(password)) {
+        $('#rule_SECURITY_PASSWORD_NUMBER').css('color', 'green')
+    }
+    else {
+        $('#rule_SECURITY_PASSWORD_NUMBER').css('color', '#908a8a')
+    }
+
+    if (wordSpecialChar(password)) {
+        $('#rule_SECURITY_PASSWORD_SPECIAL_CHAR').css('color', 'green')
+    }
+    else {
+        $('#rule_SECURITY_PASSWORD_SPECIAL_CHAR').css('color', '#908a8a')
+    }
+}
+
+// 最小长度
+function wordMinLength(word, minLength) {
+    //var minLength = {{ min_length }};
+    var re = new RegExp("^(.{" + minLength + ",})$");
+    return word.match(re)
+}
+// 大写字母
+function wordUpperCase(word) {
+    return word.match(/([A-Z]+)/)
+}
+// 小写字母
+function wordLowerCase(word) {
+    return word.match(/([a-z]+)/)
+}
+// 数字字符
+function wordNumber(word) {
+    return word.match(/([\d]+)/)
+}
+// 特殊字符
+function wordSpecialChar(word) {
+    return word.match(/[`,~,!,@,#,\$,%,\^,&,\*,\(,\),\-,_,=,\+,\{,\},\[,\],\|,\\,;,',:,",\,,\.,<,>,\/,\?]+/)
+}
+
+// 显示弹窗密码规则
+function popoverPasswordRules(password_check_rules, $el) {
+    var message = "";
+    jQuery.each(password_check_rules, function (idx, rules) {
+        message += "<li id=" + rules.id + " style='list-style-type:none;'> <i class='fa fa-check-circle-o' style='margin-right:10px;' ></i>" + rules.label + "</li>";
+    });
+    //$('#id_password_rules').html(message);
+    $el.html(message)
+}
+
+// 初始化弹窗popover
+function initPopover($container, $progress, $idPassword, $el, password_check_rules){
+    options = {};
+    // User Interface
+    options.ui = {
+        container: $container,
+        viewports: {
+            progress: $progress
+            //errors: $('.popover-content')
+        },
+        showProgressbar: true,
+        showVerdictsInsideProgressBar: true
+    };
+    $idPassword.pwstrength(options);
+    popoverPasswordRules(password_check_rules, $el);
 }
