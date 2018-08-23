@@ -24,9 +24,9 @@ from django.views import View
 from django.views.generic.base import TemplateView
 from django.db import transaction
 from django.views.generic.edit import (
-    CreateView, UpdateView, FormMixin, FormView
+    CreateView, UpdateView, FormView
 )
-from django.views.generic.detail import DetailView, SingleObjectMixin
+from django.views.generic.detail import DetailView
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth import logout as auth_logout
 
@@ -34,13 +34,13 @@ from common.const import create_success_msg, update_success_msg
 from common.mixins import JSONResponseMixin
 from common.utils import get_logger, get_object_or_none, is_uuid, ssh_key_gen
 from common.models import Setting
+from common.permissions import AdminUserRequiredMixin
 from .. import forms
 from ..models import User, UserGroup
-from ..utils import AdminUserRequiredMixin, generate_otp_uri, check_otp_code, \
+from ..utils import generate_otp_uri, check_otp_code, \
     get_user_or_tmp_user, get_password_check_rules, check_password_rules, \
     is_need_unblock
 from ..signals import post_user_create
-from ..tasks import write_login_log_async
 
 __all__ = [
     'UserListView', 'UserCreateView', 'UserDetailView',
@@ -89,6 +89,12 @@ class UserCreateView(AdminUserRequiredMixin, SuccessMessageMixin, CreateView):
         post_user_create.send(self.__class__, user=user)
         return super().form_valid(form)
 
+    def get_form_kwargs(self):
+        kwargs = super(UserCreateView, self).get_form_kwargs()
+        data = {'request': self.request}
+        kwargs.update(data)
+        return kwargs
+
 
 class UserUpdateView(AdminUserRequiredMixin, SuccessMessageMixin, UpdateView):
     model = User
@@ -121,6 +127,12 @@ class UserUpdateView(AdminUserRequiredMixin, SuccessMessageMixin, UpdateView):
             )
             return self.form_invalid(form)
         return super().form_valid(form)
+
+    def get_form_kwargs(self):
+        kwargs = super(UserUpdateView, self).get_form_kwargs()
+        data = {'request': self.request}
+        kwargs.update(data)
+        return kwargs
 
 
 class UserBulkUpdateView(AdminUserRequiredMixin, TemplateView):
@@ -158,7 +170,7 @@ class UserBulkUpdateView(AdminUserRequiredMixin, TemplateView):
     def get_context_data(self, **kwargs):
         context = {
             'app': 'Assets',
-            'action': 'Bulk update asset',
+            'action': _('Bulk update user'),
             'form': self.form,
             'users_selected': self.id_list,
         }
@@ -329,7 +341,6 @@ class UserBulkImportView(AdminUserRequiredMixin, JSONResponseMixin, FormView):
 class UserGrantedAssetView(AdminUserRequiredMixin, DetailView):
     model = User
     template_name = 'users/user_granted_asset.html'
-    object = None
 
     def get_context_data(self, **kwargs):
         context = {
